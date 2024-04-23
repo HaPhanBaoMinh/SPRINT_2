@@ -9,7 +9,7 @@ const createAccount = async (req, res) => {
     await mail.signupMail(user.email, user.fullname.split(" ")[0]);
   }
 
-  res.header("auth-token", token);
+  res.header("Authorization", token);
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
     sameSite: process.env.NODE_ENV === "development" ? true : "none",
@@ -28,7 +28,7 @@ const loginUser = async (req, res) => {
     password
   );
 
-  res.header("auth-token", token);
+  res.header("Authorization", token);
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
     sameSite: process.env.NODE_ENV === "development" ? true : "none",
@@ -44,7 +44,7 @@ const googleLogin = async (req, res) => {
   const { code } = req.body;
 
   const user = await authService.googleLogin(code);
-  res.header("auth-token", user.token);
+  res.header("Authorization", user.token);
   res.cookie("refreshToken", user.refreshToken, {
     httpOnly: true,
   });
@@ -83,7 +83,7 @@ const refreshToken = async (req, res) => {
   const tokens = await authService.generateRefreshToken(
     req.cookies.refreshToken
   );
-  res.header("auth-token", tokens.token);
+  res.header("Authorization", tokens.token);
   res.cookie("refreshToken", tokens.refreshToken, {
     httpOnly: true,
   });

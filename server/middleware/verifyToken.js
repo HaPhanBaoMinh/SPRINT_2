@@ -2,7 +2,7 @@ const jwt = require("jsonwebtoken");
 const { ErrorHandler } = require("../helpers/error");
 
 const verifyToken = (req, res, next) => {
-  const token = req.header("auth-token");
+  const token = req.headers.authorization?.split(" ")[1];
   if (!token) {
     throw new ErrorHandler(401, "Token missing");
   }

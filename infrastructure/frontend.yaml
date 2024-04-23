@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description:
+  "Create staic website hosting infrastructure using S3, CloudFront, Route53 and
+  ACM"
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: "The domain name of the website"
+    Default: "pernstore.com"
+
+Resources:
+  S3Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: !Ref DomainName
+      AccessControl: Private
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+
+  CloudFrontOriginAccessControl:
+    Type: "AWS::CloudFront::OriginAccessControl"
+    Properties:
+      OriginAccessControlConfig:
+        Description:
+          "origin access control(OAC) for allowing cloudfront to access S3
+          bucket"
+        Name: hosting-OAC-${DomainName}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  CertificateArn:
+    Type: "AWS::CertificateManager::Certificate"
+    Properties:
+      DomainName: !Ref DomainName
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          ValidationDomain: !Ref DomainName
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: S3Bucket
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !GetAtt S3Bucket.RegionalDomainName
+            Id: static-hosting
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        Enabled: true
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        DefaultCacheBehavior:
+          TargetOriginId: static-hosting
+          ViewerProtocolPolicy: redirect-to-https
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          SslSupportMethod: sni-only
+        Aliases:
+          - !Ref DomainName
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        HttpVersion: http2
+        DefaultRootObject: index.html
+
+  S3BucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              AWS: "*"
+            Action: "s3:GetObject"
+            Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
+
+Outputs:
+  CloudFrontDomainName:
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Description: "The domain name of the CloudFront distribution"
+  S3BucketName:
+    Value: !Ref S3Bucket
+    Description: "The name of the S3 bucket"
+  CloudFrontURL:
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Description: "The website URL of the S3 bucket"
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontURL"
+  CertificateArn:
+    Value: !Ref CertificateArn
+    Description: "The ARN of the ACM certificate"

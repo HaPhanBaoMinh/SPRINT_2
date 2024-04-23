@@ -11,8 +11,30 @@ const { handleError } = require("./helpers/error");
 
 const app = express();
 
-app.set("trust proxy", 1);
-app.use(cors({ credentials: true, origin: true }));
+// app.set("trust proxy", 1);
+const whitelist = ["https://d6670544.cloudfront.localhost.localstack.cloud", "http://localhost:3000", process.env.CLIENT_URL]
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (whitelist.indexOf(origin) !== -1) {
+      callback(null, true)
+    } else {
+      callback(new Error('Not allowed by CORS'))
+    }
+  },
+  credentials: true,
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+}
+app.all('*', function (req, res, next) {
+  res.header('Access-Control-Allow-Origin', "https://d6670544.cloudfront.localhost.localstack.cloud");
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if ('OPTIONS' == req.method) {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(morgan("dev"));
 app.use(compression());
