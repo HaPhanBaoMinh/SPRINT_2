@@ -9,6 +9,11 @@ Parameters:
     Description: "The domain name of the website"
     Default: "pernstore.com"
 
+  NetworkStack:
+    Type: String
+    Default: "pern-network-stack"
+    Description: "Name of the network stack"
+
 Resources:
   S3Bucket:
     Type: "AWS::S3::Bucket"
@@ -26,18 +31,56 @@ Resources:
         Description:
           "origin access control(OAC) for allowing cloudfront to access S3
           bucket"
-        Name: hosting-OAC-${DomainName}
+        Name: "OAC-S3-Bucket-6"
         OriginAccessControlOriginType: s3
         SigningBehavior: always
         SigningProtocol: sigv4
 
-  CertificateArn:
-    Type: "AWS::CertificateManager::Certificate"
+  LambdaExecutionRole:
+    Type: "AWS::IAM::Role"
     Properties:
-      DomainName: !Ref DomainName
-      DomainValidationOptions:
-        - DomainName: !Ref DomainName
-          ValidationDomain: !Ref DomainName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: "LambdaExecutionPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "arn:aws:logs:*:*:*"
+              - Effect: "Allow"
+                Action:
+                  - "ec2:CreateNetworkInterface"
+                  - "ec2:DescribeNetworkInterfaces"
+                  - "ec2:DeleteNetworkInterface"
+                Resource: "*"
+
+  OriginRequestFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Handler: "index.handler"
+      Role: !GetAtt LambdaExecutionRole.Arn
+      FunctionName: "OriginRequestFunction"
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              request = event["Records"][0]["cf"]["request"]
+              headers = request["headers"]
+              headers["x-forwarded-for"] = [{"key": "X-Forwarded-For", "value": "random-value-1234567890"}]
+              return request
+      Runtime: "python3.8"
+      Timeout: 10
+      MemorySize: 128
 
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
@@ -46,34 +89,87 @@ Resources:
       DistributionConfig:
         Origins:
           - DomainName: !GetAtt S3Bucket.RegionalDomainName
-            Id: static-hosting
+            Id: "static-hosting"
             S3OriginConfig:
               OriginAccessIdentity: ""
-        Enabled: true
-        CustomErrorResponses:
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-          - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
+          - DomainName: "pern-store-load-balancer.elb.localhost.localstack.cloud"
+            Id: "custom-origin"
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+            CustomHeaders:
+              Quantity: 1
+              Items:
+                - HeaderName: "X-Forwarded-For"
+                  HeaderValue: "random-value-1234567890"
+
+        CacheBehaviors:
+          - PathPattern: "/api/*"
+            TargetOriginId: "custom-origin"
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: false
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: all
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+            LambdaFunctionAssociations:
+              - EventType: "origin-request"
+                LambdaFunctionARN: !GetAtt OriginRequestFunction.Arn
+            OriginRequestPolicyId: "658327ea-f89d-4fab-a63d-7e88639e58f6"
+          - PathPattern: "/*"
+            TargetOriginId: "static-hosting"
+            ViewerProtocolPolicy: redirect-to-https
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            DefaultTTL: 86400
+            MaxTTL: 31536000
+            MinTTL: 0
         DefaultCacheBehavior:
-          TargetOriginId: static-hosting
+          TargetOriginId: "static-hosting"
           ViewerProtocolPolicy: redirect-to-https
           ForwardedValues:
             QueryString: false
             Cookies:
               Forward: none
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          DefaultTTL: 86400
+          MaxTTL: 31536000
+          MinTTL: 0
+        PriceClass: PriceClass_All
         ViewerCertificate:
-          AcmCertificateArn: !Ref CertificateArn
-          SslSupportMethod: sni-only
+          CloudFrontDefaultCertificate: true
+        Enabled: true
         Aliases:
           - !Ref DomainName
-        CustomErrorResponses:
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-        HttpVersion: http2
+
         DefaultRootObject: index.html
 
   S3BucketPolicy:
@@ -92,9 +188,6 @@ Outputs:
   CloudFrontDomainName:
     Value: !GetAtt CloudFrontDistribution.DomainName
     Description: "The domain name of the CloudFront distribution"
-  S3BucketName:
-    Value: !Ref S3Bucket
-    Description: "The name of the S3 bucket"
   CloudFrontURL:
     Value: !GetAtt CloudFrontDistribution.DomainName
     Description: "The website URL of the S3 bucket"
@@ -103,3 +196,10 @@ Outputs:
   CertificateArn:
     Value: !Ref CertificateArn
     Description: "The ARN of the ACM certificate"
+    Export:
+      Name: !Sub "${AWS::StackName}-CertificateArn"
+  S3BucketName:
+    Value: !Ref S3Bucket
+    Description: "The name of the S3 bucket"
+    Export:
+      Name: !Sub "${AWS::StackName}-S3BucketName"

@@ -243,6 +243,21 @@ Resources:
         - Key: Name
           Value: !Sub "${AWS::StackName}-TargetGroup"
 
+  LoadBalancerListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+      Conditions:
+        - Field: http-header
+          HttpHeaderConfig:
+            HttpHeaderName: X-Forwarded-For
+            Values:
+              - "random-value-1234567890"
+      ListenerArn: !Ref LoadBalancerListener
+      Priority: 1
+
   LoadBalancerListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     DependsOn:
@@ -327,3 +342,9 @@ Outputs:
     Value: !GetAtt LoadBalancer.DNSName
     Export:
       Name: !Sub "${AWS::StackName}-LoadBalancerDNS"
+
+  CloudFrontDNS:
+    Description: "CloudFront DNS"
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontDNS"

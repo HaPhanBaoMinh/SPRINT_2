@@ -39,7 +39,7 @@ awslocal elbv2 describe-listeners --load-balancer-arn
 # List target groups
 awslocal elbv2 describe-target-groups --load-balancer-arn
 
-# List load balancers
+# List load balancers       
 awslocal elbv2 describe-load-balancers
 
 # List ECS services
@@ -58,15 +58,17 @@ awslocal cloudformation create-stack --stack-name pern-network-stack --template-
 
 awslocal cloudformation describe-stacks --stack-name pern-network-stack
 
-awslocal cloudformation create-stack --stack-name pern-backend-stack --template-body file://backend.yaml
-
-awslocal cloudformation describe-stacks --stack-name pern-backend-stack
-
 awslocal cloudformation create-stack --stack-name pern-frontend-stack --template-body file://frontend.yaml
 
 awslocal cloudformation describe-stacks --stack-name pern-frontend-stack
 
+awslocal cloudformation create-stack --stack-name pern-backend-stack --template-body file://backend.yaml
+
+awslocal cloudformation describe-stacks --stack-name pern-backend-stack
+
+awslocal cloudformation delete-stack --stack-name pern-network-stack
 awslocal cloudformation delete-stack --stack-name pern-frontend-stack
+awslocal cloudformation delete-stack --stack-name pern-backend-stack
 
 # pern-frontend-stack
 # pern-network-stack
