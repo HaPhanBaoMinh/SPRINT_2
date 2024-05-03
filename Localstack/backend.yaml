@@ -1,0 +1,285 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "Create RDS database for the PERN stack application"
+
+Parameters:
+  DesiredCount:
+    Type: Number
+    Default: 1
+    Description: "Number of tasks to run"
+
+  Role:
+    Type: String
+    Default: ""
+    Description:
+      (Optional) An IAM role to give the service's containers if the code within
+      needs to access other AWS resources like S3 buckets, DynamoDB tables, etc
+
+  ServiceName:
+    Type: String
+    Default: "pernstore-service"
+    Description: "Name of the ECS service"
+
+  Image:
+    Type: String
+    Default: "baominh/pern-store-server"
+    Description: "Name of the Docker image to use"
+
+  ContainerPort:
+    Type: Number
+    Default: 9000
+    Description: "Port the container listens on"
+
+  NetworkStack:
+    Type: String
+    Default: "pern-network-stack"
+    Description: "Name of the network stack"
+
+  FrontendStack:
+    Type: String
+    Default: "pern-frontend-stack"
+    Description: "Name of the frontend stack"
+
+  DBInstanceClass:
+    Type: String
+    Default: "db.t3.small"
+    Description: "DB instance class"
+
+  DBName:
+    Type: String
+    Default: "pernstore"
+    Description: "Name of the database"
+
+  DBUsername:
+    Type: String
+    Default: "adminuser"
+    Description: "Username for the database"
+
+  DBPassword:
+    Type: String
+    Default: "adminuser"
+    Description: "Password for the database"
+
+  BasionHostKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: "thinkpad"
+    Description: "Name of the key pair to use for the bastion host"
+
+  BasionHostAMI:
+    Type: AWS::EC2::Image::Id
+    Default: "ami-0a1179631ec8933d7"
+    Description: "AMI ID for the bastion host"
+
+Conditions:
+  HasRole: !Not [!Equals [!Ref Role, ""]]
+
+Resources:
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for RDS"
+      SubnetIds:
+        - Fn::ImportValue: !Sub "${NetworkStack}-Private-Subnet-RDS"
+        - Fn::ImportValue: !Sub "${NetworkStack}-Private-Subnet-RDS2"
+
+  RDS:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: 20
+      DBName: !Ref DBName
+      Engine: "postgres"
+      EngineVersion: "15.5"
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      PubliclyAccessible: true
+      StorageType: "gp2"
+      BackupRetentionPeriod: 7
+      MultiAZ: false
+      VPCSecurityGroups:
+        - Fn::ImportValue: !Sub "${NetworkStack}-DBSecurityGroup"
+      DBSubnetGroupName: !Ref DBSubnetGroup
+
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow SSH access to the bastion host"
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStack}-VPC"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: "0.0.0.0/0"
+
+  # Bastion host just need in real AWS environment
+  BastionHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: "t2.micro"
+      ImageId: !Ref BasionHostAMI
+      KeyName: !Ref BasionHostKeyName
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - !GetAtt BastionSecurityGroup.GroupId
+          SubnetId:
+            Fn::ImportValue: !Sub "${NetworkStack}-Public-Subnet"
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: "pernstore-cluster"
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ecs-tasks.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: "AmazonECSTaskExecutionRolePolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "ecr:GetAuthorizationToken"
+                  - "ecr:BatchCheckLayerAvailability"
+                  - "ecr:GetDownloadUrlForLayer"
+                  - "ecr:BatchGetImage"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "*"
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ecs-tasks.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: "TaskRolePolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "rds:*"
+                Resource: "*"
+
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref ServiceName
+      Cpu: "256"
+      Memory: "512"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: !Ref ServiceName
+          Image: !Ref Image
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              HostPort: !Ref ContainerPort
+          Environment:
+            - Name: "PORT"
+              Value: !Ref ContainerPort
+            - Name: "POSTGRES_DB"
+              Value: !Ref DBName
+            - Name: "POSTGRES_USER"
+              Value: !Ref DBUsername
+            - Name: "POSTGRES_PASSWORD"
+              Value: !Ref DBPassword
+            - Name: "POSTGRES_HOST"
+              Value: !GetAtt RDS.Endpoint.Address
+            - Name: "POSTGRES_PORT"
+              Value: !GetAtt RDS.Endpoint.Port
+            - Name: "CLIENT_URL"
+              Value: !Join
+                - ""
+                - - "https://"
+                  - Fn::ImportValue: !Sub "${FrontendStack}-CloudFrontURL"
+
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECSCluster
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref ECSTaskDefinition
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - Fn::ImportValue: !Sub "${NetworkStack}-ECSSecurityGroup"
+          Subnets:
+            - Fn::ImportValue: !Sub "${NetworkStack}-Private-Subnet-ECS"
+            - Fn::ImportValue: !Sub "${NetworkStack}-Private-Subnet-ECS2"
+      LoadBalancers:
+        - ContainerName: !Ref ServiceName
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn:
+            Fn::ImportValue: !Sub "${NetworkStack}-TargetGroup"
+
+Outputs:
+  Service:
+    Description: "ECS Service"
+    Value: !Ref ECSService
+    Export:
+      Name: !Sub "${AWS::StackName}-Service"
+
+  TaskDefinition:
+    Description: "ECS Task Definition"
+    Value: !Ref ECSTaskDefinition
+    Export:
+      Name: !Sub "${AWS::StackName}-TaskDefinition"
+
+  Cluster:
+    Description: "ECS Cluster"
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub "${AWS::StackName}-Cluster"
+
+  RDSHost:
+    Description: "RDS Host"
+    Value: !GetAtt RDS.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-RDSHost"
+
+  RDSPort:
+    Description: "RDS Port"
+    Value: !GetAtt RDS.Endpoint.Port
+    Export:
+      Name: !Sub "${AWS::StackName}-RDSPort"
+
+  DBSubnetGroup:
+    Description: "RDS Subnet Group"
+    Value: !Ref DBSubnetGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-DBSubnetGroup"
+
+  DBUsername:
+    Description: "RDS Username"
+    Value: !Ref DBUsername
+    Export:
+      Name: !Sub "${AWS::StackName}-DBUsername"
+
+  DBName:
+    Description: "RDS Database Name"
+    Value: !Ref DBName
+    Export:
+      Name: !Sub "${AWS::StackName}-DBName"

@@ -3,18 +3,33 @@ Description:
   "Create VPC, Subnets, Route Tables, Internet Gateway, NAT Gateway, Security
   Groups and Route53 Hosted Zone"
 
+Parameters:
+  AZ1:
+    Type: "AWS::EC2::AvailabilityZone::Name"
+    Default: "us-east-1a"
+    Description: "Availability Zone 1"
+
+  AZ2:
+    Type: "AWS::EC2::AvailabilityZone::Name"
+    Default: "us-east-1b"
+    Description: "Availability Zone 2"
+
 Mappings:
   SubnetConfig:
     VPC:
       CIDR: "10.0.0.0/16"
     PublicSubnet:
       CIDR: "10.0.0.0/24"
-    PrivateSubnetECS:
+    PrivateSubnetECS1:
       CIDR: "10.0.2.0/24"
-    PrivateSubnetRDS:
+    PrivateSubnetECS2:
       CIDR: "10.0.3.0/24"
-    PublicSubnetDR:
+    PrivateSubnetRDS1:
       CIDR: "10.0.4.0/24"
+    PrivateSubnetRDS2:
+      CIDR: "10.0.5.0/24"
+    PublicSubnetDR:
+      CIDR: "10.0.6.0/24"
 
 Resources:
   ## VPC ##
@@ -27,24 +42,6 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-VPC"
-
-  ## NAT Gateway ##
-  NatGateway:
-    Type: "AWS::EC2::NatGateway"
-    Properties:
-      AllocationId: !GetAtt ElasticIPNAT.AllocationId
-      SubnetId: !Ref PublicSubnet
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-NatGateway-ECS"
-
-  ElasticIPNAT:
-    Type: "AWS::EC2::EIP"
-    Properties:
-      Domain: "vpc"
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-ElasticIP-NAT"
 
   ## Internet Gateway ##
   InternetGateway:
@@ -83,22 +80,11 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       CidrBlock: !FindInMap [SubnetConfig, PublicSubnet, CIDR]
-      AvailabilityZone: !Select [0, !GetAZs ""]
+      AvailabilityZone: !Ref AZ1
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-Public-Subnet"
-
-  PublicSubnetDR:
-    Type: "AWS::EC2::Subnet"
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: !FindInMap [SubnetConfig, PublicSubnetDR, CIDR]
-      AvailabilityZone: !Select [1, !GetAZs ""]
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-Public-Subnet-DR"
 
   PublicSubnetRouteTableAssociation:
     Type: "AWS::EC2::SubnetRouteTableAssociation"
@@ -106,7 +92,60 @@ Resources:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
-  ## Private Subnets ECS ##
+  ## Public Subnet DR ##
+  PublicSubnetDR:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [SubnetConfig, PublicSubnetDR, CIDR]
+      AvailabilityZone: !Ref AZ2
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Public-Subnet-DR"
+
+  PublicRouteDR:
+    Type: "AWS::EC2::Route"
+    DependsOn:
+      - InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTableDR
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicRouteTableDR:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Public-RT-DR"
+
+  PublicSubnetRouteTableAssociationDR:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PublicSubnetDR
+      RouteTableId: !Ref PublicRouteTableDR
+
+  ## NAT Gateway ##
+  NatGateway:
+    Type: "AWS::EC2::NatGateway"
+    Properties:
+      AllocationId: !GetAtt ElasticIPNAT.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-NatGateway-ECS"
+
+  ElasticIPNAT:
+    Type: "AWS::EC2::EIP"
+    Properties:
+      Domain: "vpc"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ElasticIP-NAT"
+
+  ## Private Subnets ECS 1 ##
   PrivateRouteTableECS:
     Type: "AWS::EC2::RouteTable"
     Properties:
@@ -128,8 +167,8 @@ Resources:
     Type: "AWS::EC2::Subnet"
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetECS, CIDR]
-      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetECS1, CIDR]
+      AvailabilityZone: !Ref AZ1
       MapPublicIpOnLaunch: false
       Tags:
         - Key: Name
@@ -141,7 +180,49 @@ Resources:
       SubnetId: !Ref PrivateSubnetECS
       RouteTableId: !Ref PrivateRouteTableECS
 
-  ## Private Subnets RDS ##
+  ## Private Subnets ECS 2 ##
+  PrivateRouteTableECS2:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-RT-ECS2"
+
+  PrivateRouteECS2:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableECS2
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGateway
+    DependsOn:
+      - NatGateway
+
+  PrivateSubnetECS2:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetECS2, CIDR]
+      AvailabilityZone: !Ref AZ2
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-Subnet-ECS2"
+
+  PrivateSubnetRouteTableAssociationECS2:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PrivateSubnetECS2
+      RouteTableId: !Ref PrivateRouteTableECS2
+
+  ## Private Subnets RDS 1 ##
+  PrivateRouteRDS:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableRDS
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGateway
+
   PrivateRouteTableRDS:
     Type: "AWS::EC2::RouteTable"
     Properties:
@@ -150,21 +231,12 @@ Resources:
         - Key: Name
           Value: !Sub "${AWS::StackName}-Private-RT-RDS"
 
-  PrivateRouteRDS:
-    Type: "AWS::EC2::Route"
-    Properties:
-      RouteTableId: !Ref PrivateRouteTableRDS
-      DestinationCidrBlock: "0.0.0.0/0"
-      NatGatewayId: !Ref NatGateway
-    DependsOn:
-      - NatGateway
-
   PrivateSubnetRDS:
     Type: "AWS::EC2::Subnet"
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetRDS, CIDR]
-      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetRDS1, CIDR]
+      AvailabilityZone: !Ref AZ1
       MapPublicIpOnLaunch: false
       Tags:
         - Key: Name
@@ -175,6 +247,39 @@ Resources:
     Properties:
       SubnetId: !Ref PrivateSubnetRDS
       RouteTableId: !Ref PrivateRouteTableRDS
+
+  ## Private Subnets RDS 2 ##
+  PrivateRouteRDS2:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableRDS2
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGateway
+
+  PrivateRouteTableRDS2:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-RT-RDS2"
+
+  PrivateSubnetRDS2:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetRDS2, CIDR]
+      AvailabilityZone: !Ref AZ2
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-Subnet-RDS2"
+
+  PrivateSubnetRouteTableAssociationRDS2:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PrivateSubnetRDS2
+      RouteTableId: !Ref PrivateRouteTableRDS2
 
   ## Security Groups ##
   ELBSecurityGroup:
@@ -230,7 +335,7 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: !Sub "${AWS::StackName}-TargetGroup"
-      Port: 80
+      Port: 9000
       Protocol: HTTP
       VpcId: !Ref VPC
       TargetType: ip
@@ -252,9 +357,9 @@ Resources:
       Conditions:
         - Field: http-header
           HttpHeaderConfig:
-            HttpHeaderName: X-Forwarded-For
+            HttpHeaderName: "forwarded-key"
             Values:
-              - "random-value-1234567890"
+              - "123456789"
       ListenerArn: !Ref LoadBalancerListener
       Priority: 1
 
@@ -264,11 +369,14 @@ Resources:
       - LoadBalancer
     Properties:
       LoadBalancerArn: !Ref LoadBalancer
-      Protocol: HTTPS
-      Port: 443
+      Protocol: HTTP
+      Port: 80
       DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref TargetGroup
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: "503"
+            ContentType: "text/plain"
+            MessageBody: "Service Unavailable"
 
 Outputs:
   VPC:
@@ -282,6 +390,12 @@ Outputs:
     Value: !Ref PublicSubnet
     Export:
       Name: !Sub "${AWS::StackName}-Public-Subnet"
+
+  PublicSubnetDR:
+    Description: "Public Subnet DR ID"
+    Value: !Ref PublicSubnetDR
+    Export:
+      Name: !Sub "${AWS::StackName}-Public-Subnet-DR"
 
   LoadBalancerListener:
     Description: "Load Balancer Listener ID"
@@ -306,6 +420,18 @@ Outputs:
     Value: !Ref PrivateSubnetRDS
     Export:
       Name: !Sub "${AWS::StackName}-Private-Subnet-RDS"
+
+  PrivateSubnetRDS2:
+    Description: "Private Subnet for RDS 2 ID"
+    Value: !Ref PrivateSubnetRDS2
+    Export:
+      Name: !Sub "${AWS::StackName}-Private-Subnet-RDS2"
+
+  PrivateSubnetECS2:
+    Description: "Private Subnet for ECS 2 ID"
+    Value: !Ref PrivateSubnetECS2
+    Export:
+      Name: !Sub "${AWS::StackName}-Private-Subnet-ECS2"
 
   LoadBalancer:
     Description: "Load Balancer ID"
@@ -342,9 +468,3 @@ Outputs:
     Value: !GetAtt LoadBalancer.DNSName
     Export:
       Name: !Sub "${AWS::StackName}-LoadBalancerDNS"
-
-  CloudFrontDNS:
-    Description: "CloudFront DNS"
-    Value: !GetAtt CloudFrontDistribution.DomainName
-    Export:
-      Name: !Sub "${AWS::StackName}-CloudFrontDNS"

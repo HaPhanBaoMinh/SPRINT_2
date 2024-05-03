@@ -7,10 +7,10 @@ awslocal s3api create-bucket --bucket pern-frontend-bucket
 awslocal s3api list-buckets
 
 # List the contents of the bucket
-awslocal s3 ls s3://pern-shop.com
+awslocal s3 ls s3://pern-store-bucket
 
 # Upload the front end files to the bucket
-awslocal s3 cp . s3://pernstore.com --recursive
+awslocal s3 cp . s3://pern-store-bucket --recursive
 
 # Implement cloudformation to create a new stack
 awslocal cloudformation create-stack --stack-name pern-frontend-stack --template-body file://frontend.yaml
@@ -52,8 +52,6 @@ awslocal ecs describe-services --cluster ECSCluster-df1cb283 --service s-bea86f1
 awslocal ecs list-clusters
 
 # Details of task definition
-awslocal ecs describe-task-definition --task-definition pern-frontend-task
-
 awslocal cloudformation create-stack --stack-name pern-network-stack --template-body file://network.yaml
 
 awslocal cloudformation describe-stacks --stack-name pern-network-stack
@@ -69,6 +67,8 @@ awslocal cloudformation describe-stacks --stack-name pern-backend-stack
 awslocal cloudformation delete-stack --stack-name pern-network-stack
 awslocal cloudformation delete-stack --stack-name pern-frontend-stack
 awslocal cloudformation delete-stack --stack-name pern-backend-stack
+
+awslocal cloudformation update-stack --stack-name pern-network-stack --template-body file://network.yaml
 
 # pern-frontend-stack
 # pern-network-stack

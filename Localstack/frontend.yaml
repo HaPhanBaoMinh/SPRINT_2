@@ -1,0 +1,158 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description:
+  "Create staic website hosting infrastructure using S3, CloudFront, Route53 and
+  ACM"
+
+Parameters:
+  NetworkStack:
+    Type: String
+    Default: "pern-network-stack"
+    Description: "Name of the network stack"
+
+  BucketName:
+    Type: String
+    Default: "pern-store-bucket"
+    Description: "Name of the S3 bucket"
+
+Resources:
+  S3Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: !Ref BucketName
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  S3BucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    DependsOn: S3Bucket
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal: "*"
+            Action: "s3:GetObject"
+            Resource: "arn:aws:s3:::pern-store-bucket/*"
+
+  CloudFrontCachePolicy:
+    Type: "AWS::CloudFront::CachePolicy"
+    Properties:
+      CachePolicyConfig:
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        MinTTL: 0
+        Name: "pern-store-cache-policy"
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+          EnableAcceptEncodingGzip: false
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: S3Bucket
+    Properties:
+      DistributionConfig:
+        Origins:
+          - DomainName: !Sub "${BucketName}.s3-website.${AWS::Region}.amazonaws.com"
+            Id: "static-hosting"
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+          - DomainName: !ImportValue
+              Fn::Sub: "${NetworkStack}-Endpoint"
+            Id: "custom-origin"
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+            # Just work with cloudformation in AWS
+            OriginCustomHeaders:
+              - HeaderName: "forwarded-key"
+                HeaderValue: "123456789"
+
+        CacheBehaviors:
+          - PathPattern: "/api/*"
+            TargetOriginId: "custom-origin"
+            ViewerProtocolPolicy: allow-all
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: all
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+
+            CachePolicyId: !Ref CloudFrontCachePolicy
+
+          - PathPattern: "/*"
+            TargetOriginId: "static-hosting"
+            ViewerProtocolPolicy: https-only
+            ForwardedValues:
+              QueryString: false
+              Cookies:
+                Forward: none
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            CachedMethods:
+              - GET
+              - HEAD
+            Compress: true
+            DefaultTTL: 86400
+            MaxTTL: 31536000
+            MinTTL: 0
+            CachePolicyId: !Ref CloudFrontCachePolicy
+
+        DefaultCacheBehavior:
+          TargetOriginId: "static-hosting"
+          ViewerProtocolPolicy: https-only
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          DefaultTTL: 86400
+          MaxTTL: 31536000
+          MinTTL: 0
+
+        Enabled: true
+
+Outputs:
+  CloudFrontDomainName:
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Description: "The domain name of the CloudFront distribution"
+  CloudFrontURL:
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Description: "The website URL of the S3 bucket"
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontURL"
+  S3BucketName:
+    Value: !Ref S3Bucket
+    Description: "The name of the S3 bucket"
+    Export:
+      Name: !Sub "${AWS::StackName}-S3BucketName"
+  URL:
+    Value: !Join ["", ["https://", !GetAtt CloudFrontDistribution.DomainName]]

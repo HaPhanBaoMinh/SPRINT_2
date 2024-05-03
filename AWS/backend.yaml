@@ -29,11 +29,6 @@ Parameters:
     Default: 9000
     Description: "Port the container listens on"
 
-  HostPort:
-    Type: String
-    Default: 80
-    Description: "Port the host forwards to"
-
   NetworkStack:
     Type: String
     Default: "pern-network-stack"
@@ -64,6 +59,16 @@ Parameters:
     Default: "adminuser"
     Description: "Password for the database"
 
+  BasionHostKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: "thinkpad"
+    Description: "Name of the key pair to use for the bastion host"
+
+  BasionHostAMI:
+    Type: AWS::EC2::Image::Id
+    Default: "ami-0a1179631ec8933d7"
+    Description: "AMI ID for the bastion host"
+
 Conditions:
   HasRole: !Not [!Equals [!Ref Role, ""]]
 
@@ -74,6 +79,7 @@ Resources:
       DBSubnetGroupDescription: "Subnet group for RDS"
       SubnetIds:
         - Fn::ImportValue: !Sub "${NetworkStack}-Private-Subnet-RDS"
+        - Fn::ImportValue: !Sub "${NetworkStack}-Private-Subnet-RDS2"
 
   RDS:
     Type: AWS::RDS::DBInstance
@@ -82,16 +88,43 @@ Resources:
       AllocatedStorage: 20
       DBName: !Ref DBName
       Engine: "postgres"
-      EngineVersion: "15.0"
+      EngineVersion: "15.5"
       MasterUsername: !Ref DBUsername
       MasterUserPassword: !Ref DBPassword
-      PubliclyAccessible: false
+      PubliclyAccessible: true
       StorageType: "gp2"
       BackupRetentionPeriod: 7
       MultiAZ: false
       VPCSecurityGroups:
         - Fn::ImportValue: !Sub "${NetworkStack}-DBSecurityGroup"
       DBSubnetGroupName: !Ref DBSubnetGroup
+
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow SSH access to the bastion host"
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStack}-VPC"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: "0.0.0.0/0"
+
+  # Bastion host just need in real AWS environment
+  BastionHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: "t2.micro"
+      ImageId: !Ref BasionHostAMI
+      KeyName: !Ref BasionHostKeyName
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - !GetAtt BastionSecurityGroup.GroupId
+          SubnetId:
+            Fn::ImportValue: !Sub "${NetworkStack}-Public-Subnet"
 
   ECSCluster:
     Type: AWS::ECS::Cluster
@@ -124,6 +157,27 @@ Resources:
                   - "logs:PutLogEvents"
                 Resource: "*"
 
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ecs-tasks.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: "TaskRolePolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "rds:*"
+                Resource: "*"
+
   ECSTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -134,14 +188,16 @@ Resources:
       RequiresCompatibilities:
         - FARGATE
       ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-      TaskRoleArn: !If [HasRole, !Ref Role, !Ref "AWS::NoValue"]
+      TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
         - Name: !Ref ServiceName
           Image: !Ref Image
           PortMappings:
             - ContainerPort: !Ref ContainerPort
-              HostPort: !Ref HostPort
+              HostPort: !Ref ContainerPort
           Environment:
+            - Name: "PORT"
+              Value: !Ref ContainerPort
             - Name: "POSTGRES_DB"
               Value: !Ref DBName
             - Name: "POSTGRES_USER"
@@ -172,6 +228,7 @@ Resources:
             - Fn::ImportValue: !Sub "${NetworkStack}-ECSSecurityGroup"
           Subnets:
             - Fn::ImportValue: !Sub "${NetworkStack}-Private-Subnet-ECS"
+            - Fn::ImportValue: !Sub "${NetworkStack}-Private-Subnet-ECS2"
       LoadBalancers:
         - ContainerName: !Ref ServiceName
           ContainerPort: !Ref ContainerPort

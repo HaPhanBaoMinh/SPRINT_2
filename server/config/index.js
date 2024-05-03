@@ -13,7 +13,9 @@ const pool = new Pool({
   /*
     SSL is not supported in development
     */
-  // ssl: isProduction ? { rejectUnauthorized: false } : false,
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
 module.exports = {

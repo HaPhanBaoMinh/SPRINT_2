@@ -1,0 +1,470 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description:
+  "Create VPC, Subnets, Route Tables, Internet Gateway, NAT Gateway, Security
+  Groups and Route53 Hosted Zone"
+
+Parameters:
+  AZ1:
+    Type: "AWS::EC2::AvailabilityZone::Name"
+    Default: "us-east-1a"
+    Description: "Availability Zone 1"
+
+  AZ2:
+    Type: "AWS::EC2::AvailabilityZone::Name"
+    Default: "us-east-1b"
+    Description: "Availability Zone 2"
+
+Mappings:
+  SubnetConfig:
+    VPC:
+      CIDR: "10.0.0.0/16"
+    PublicSubnet:
+      CIDR: "10.0.0.0/24"
+    PrivateSubnetECS1:
+      CIDR: "10.0.2.0/24"
+    PrivateSubnetECS2:
+      CIDR: "10.0.3.0/24"
+    PrivateSubnetRDS1:
+      CIDR: "10.0.4.0/24"
+    PrivateSubnetRDS2:
+      CIDR: "10.0.5.0/24"
+    PublicSubnetDR:
+      CIDR: "10.0.6.0/24"
+
+Resources:
+  ## VPC ##
+  VPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: !FindInMap [SubnetConfig, VPC, CIDR]
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-VPC"
+
+  ## Internet Gateway ##
+  InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-IGW"
+
+  InternetGatewayAttachment:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  ## Public Subnet ##
+  PublicRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Public-RT"
+
+  PublicRoute:
+    Type: "AWS::EC2::Route"
+    DependsOn:
+      - InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [SubnetConfig, PublicSubnet, CIDR]
+      AvailabilityZone: !Ref AZ1
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Public-Subnet"
+
+  PublicSubnetRouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  ## Public Subnet DR ##
+  PublicSubnetDR:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [SubnetConfig, PublicSubnetDR, CIDR]
+      AvailabilityZone: !Ref AZ2
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Public-Subnet-DR"
+
+  PublicRouteDR:
+    Type: "AWS::EC2::Route"
+    DependsOn:
+      - InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTableDR
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  PublicRouteTableDR:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Public-RT-DR"
+
+  PublicSubnetRouteTableAssociationDR:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PublicSubnetDR
+      RouteTableId: !Ref PublicRouteTableDR
+
+  ## NAT Gateway ##
+  NatGateway:
+    Type: "AWS::EC2::NatGateway"
+    Properties:
+      AllocationId: !GetAtt ElasticIPNAT.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-NatGateway-ECS"
+
+  ElasticIPNAT:
+    Type: "AWS::EC2::EIP"
+    Properties:
+      Domain: "vpc"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ElasticIP-NAT"
+
+  ## Private Subnets ECS 1 ##
+  PrivateRouteTableECS:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-RT-ECS"
+
+  PrivateRouteECS:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableECS
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGateway
+    DependsOn:
+      - NatGateway
+
+  PrivateSubnetECS:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetECS1, CIDR]
+      AvailabilityZone: !Ref AZ1
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-Subnet-ECS"
+
+  PrivateSubnetRouteTableAssociationECS:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PrivateSubnetECS
+      RouteTableId: !Ref PrivateRouteTableECS
+
+  ## Private Subnets ECS 2 ##
+  PrivateRouteTableECS2:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-RT-ECS2"
+
+  PrivateRouteECS2:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableECS2
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGateway
+    DependsOn:
+      - NatGateway
+
+  PrivateSubnetECS2:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetECS2, CIDR]
+      AvailabilityZone: !Ref AZ2
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-Subnet-ECS2"
+
+  PrivateSubnetRouteTableAssociationECS2:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PrivateSubnetECS2
+      RouteTableId: !Ref PrivateRouteTableECS2
+
+  ## Private Subnets RDS 1 ##
+  PrivateRouteRDS:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableRDS
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGateway
+
+  PrivateRouteTableRDS:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-RT-RDS"
+
+  PrivateSubnetRDS:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetRDS1, CIDR]
+      AvailabilityZone: !Ref AZ1
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-Subnet-RDS"
+
+  PrivateSubnetRouteTableAssociationRDS:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PrivateSubnetRDS
+      RouteTableId: !Ref PrivateRouteTableRDS
+
+  ## Private Subnets RDS 2 ##
+  PrivateRouteRDS2:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableRDS2
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref NatGateway
+
+  PrivateRouteTableRDS2:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-RT-RDS2"
+
+  PrivateSubnetRDS2:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetRDS2, CIDR]
+      AvailabilityZone: !Ref AZ2
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Private-Subnet-RDS2"
+
+  PrivateSubnetRouteTableAssociationRDS2:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref PrivateSubnetRDS2
+      RouteTableId: !Ref PrivateRouteTableRDS2
+
+  ## Security Groups ##
+  ELBSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: Access to the public facing load balancer
+      VpcId: !Ref "VPC"
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+
+  ECSSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Allow HTTP and SSH inbound traffic"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref "ELBSecurityGroup"
+
+  DBSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Allow database connection"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref "ECSSecurityGroup"
+
+  ## LoadBalancer ##
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: "pern-store-load-balancer"
+      Subnets:
+        - !Ref PublicSubnet
+        - !Ref PublicSubnetDR
+      SecurityGroups:
+        - !Ref ELBSecurityGroup
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: "60"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-LoadBalancer"
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${AWS::StackName}-TargetGroup"
+      Port: 9000
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      TargetType: ip
+      HealthCheckIntervalSeconds: 30
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-TargetGroup"
+
+  LoadBalancerListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+      Conditions:
+        - Field: http-header
+          HttpHeaderConfig:
+            HttpHeaderName: "forwarded-key"
+            Values:
+              - "123456789"
+      ListenerArn: !Ref LoadBalancerListener
+      Priority: 1
+
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    DependsOn:
+      - LoadBalancer
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: "503"
+            ContentType: "text/plain"
+            MessageBody: "Service Unavailable"
+
+Outputs:
+  VPC:
+    Description: "VPC ID"
+    Value: !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VPC"
+
+  PublicSubnet:
+    Description: "Public Subnet ID"
+    Value: !Ref PublicSubnet
+    Export:
+      Name: !Sub "${AWS::StackName}-Public-Subnet"
+
+  PublicSubnetDR:
+    Description: "Public Subnet DR ID"
+    Value: !Ref PublicSubnetDR
+    Export:
+      Name: !Sub "${AWS::StackName}-Public-Subnet-DR"
+
+  LoadBalancerListener:
+    Description: "Load Balancer Listener ID"
+    Value: !Ref LoadBalancerListener
+    Export:
+      Name: !Sub "${AWS::StackName}-LoadBalancerListener"
+
+  Endpoint:
+    Description: "Load Balancer DNS"
+    Value: !GetAtt LoadBalancer.DNSName
+    Export:
+      Name: !Sub "${AWS::StackName}-Endpoint"
+
+  PrivateSubnetECS:
+    Description: "Private Subnet for ECS ID"
+    Value: !Ref PrivateSubnetECS
+    Export:
+      Name: !Sub "${AWS::StackName}-Private-Subnet-ECS"
+
+  PrivateSubnetRDS:
+    Description: "Private Subnet for RDS ID"
+    Value: !Ref PrivateSubnetRDS
+    Export:
+      Name: !Sub "${AWS::StackName}-Private-Subnet-RDS"
+
+  PrivateSubnetRDS2:
+    Description: "Private Subnet for RDS 2 ID"
+    Value: !Ref PrivateSubnetRDS2
+    Export:
+      Name: !Sub "${AWS::StackName}-Private-Subnet-RDS2"
+
+  PrivateSubnetECS2:
+    Description: "Private Subnet for ECS 2 ID"
+    Value: !Ref PrivateSubnetECS2
+    Export:
+      Name: !Sub "${AWS::StackName}-Private-Subnet-ECS2"
+
+  LoadBalancer:
+    Description: "Load Balancer ID"
+    Value: !Ref LoadBalancer
+    Export:
+      Name: !Sub "${AWS::StackName}-LoadBalancer"
+
+  TargetGroup:
+    Description: "Target Group ID"
+    Value: !Ref TargetGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-TargetGroup"
+
+  ELBSecurityGroup:
+    Description: "ELB Security Group ID"
+    Value: !Ref ELBSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ELBSecurityGroup"
+
+  ECSSecurityGroup:
+    Description: "ECS Security Group ID"
+    Value: !Ref ECSSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ECSSecurityGroup"
+
+  DBSecurityGroup:
+    Description: "RDS Security Group ID"
+    Value: !Ref DBSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-DBSecurityGroup"
+
+  LoadBalancerDNS:
+    Description: "Load Balancer DNS"
+    Value: !GetAtt LoadBalancer.DNSName
+    Export:
+      Name: !Sub "${AWS::StackName}-LoadBalancerDNS"
