@@ -208,6 +208,8 @@ Resources:
               Value: !GetAtt RDS.Endpoint.Address
             - Name: "POSTGRES_PORT"
               Value: !GetAtt RDS.Endpoint.Port
+            - Name: "DEPLOY_ENVIRONMENT"
+              Value: "AWS"
             - Name: "CLIENT_URL"
               Value: !Join
                 - ""

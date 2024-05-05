@@ -15,6 +15,12 @@ Parameters:
     Description: "Name of the S3 bucket"
 
 Resources:
+  CloudFrontOAI:
+    Type: "AWS::CloudFront::CloudFrontOriginAccessIdentity"
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: "OAI for pern-store-bucket"
+
   S3Bucket:
     Type: "AWS::S3::Bucket"
     Properties:
@@ -22,13 +28,9 @@ Resources:
       WebsiteConfiguration:
         IndexDocument: index.html
         ErrorDocument: index.html
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: false
-        BlockPublicPolicy: false
-        IgnorePublicAcls: false
-        RestrictPublicBuckets: false
 
   S3BucketPolicy:
+    DependsOn: S3Bucket
     Type: "AWS::S3::BucketPolicy"
     DependsOn: S3Bucket
     Properties:
@@ -40,6 +42,18 @@ Resources:
             Principal: "*"
             Action: "s3:GetObject"
             Resource: "arn:aws:s3:::pern-store-bucket/*"
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOAI.S3CanonicalUserId
+          # deny access for non SSL access to S3 bucket
+          - Effect: "Deny"
+            Principal: "*"
+            Action: "s3:GetObject"
+            Resource: 
+              - !Sub "arn:aws:s3:::${BucketName}/*"
+              - !Sub "arn:aws:s3:::${BucketName}"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
 
   CloudFrontCachePolicy:
     Type: "AWS::CloudFront::CachePolicy"
@@ -64,10 +78,11 @@ Resources:
     Properties:
       DistributionConfig:
         Origins:
-          - DomainName: !Sub "${BucketName}.s3-website.${AWS::Region}.amazonaws.com"
+          - DomainName: !Sub "${BucketName}.s3.${AWS::Region}.amazonaws.com"
             Id: "static-hosting"
-            CustomOriginConfig:
-              OriginProtocolPolicy: http-only
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${CloudFrontOAI}"
+
           - DomainName: !ImportValue
               Fn::Sub: "${NetworkStack}-Endpoint"
             Id: "custom-origin"
@@ -139,7 +154,8 @@ Resources:
           MinTTL: 0
 
         Enabled: true
-
+        DefaultRootObject: index.html
+        
 Outputs:
   CloudFrontDomainName:
     Value: !GetAtt CloudFrontDistribution.DomainName

@@ -112,19 +112,19 @@ Resources:
           CidrIp: "0.0.0.0/0"
 
   # Bastion host just need in real AWS environment
-  BastionHost:
-    Type: AWS::EC2::Instance
-    Properties:
-      InstanceType: "t2.micro"
-      ImageId: !Ref BasionHostAMI
-      KeyName: !Ref BasionHostKeyName
-      NetworkInterfaces:
-        - AssociatePublicIpAddress: true
-          DeviceIndex: 0
-          GroupSet:
-            - !GetAtt BastionSecurityGroup.GroupId
-          SubnetId:
-            Fn::ImportValue: !Sub "${NetworkStack}-Public-Subnet"
+  # BastionHost:
+  #   Type: AWS::EC2::Instance
+  #   Properties:
+  #     InstanceType: "t2.micro"
+  #     ImageId: !Ref BasionHostAMI
+  #     KeyName: !Ref BasionHostKeyName
+  #     NetworkInterfaces:
+  #       - AssociatePublicIpAddress: true
+  #         DeviceIndex: 0
+  #         GroupSet:
+  #           - !GetAtt BastionSecurityGroup.GroupId
+  #         SubnetId:
+  #           Fn::ImportValue: !Sub "${NetworkStack}-Public-Subnet"
 
   ECSCluster:
     Type: AWS::ECS::Cluster
@@ -208,6 +208,8 @@ Resources:
               Value: !GetAtt RDS.Endpoint.Address
             - Name: "POSTGRES_PORT"
               Value: !GetAtt RDS.Endpoint.Port
+            - Name: "DEPLOY_ENVIRONMENT"
+              Value: "localstack"
             - Name: "CLIENT_URL"
               Value: !Join
                 - ""

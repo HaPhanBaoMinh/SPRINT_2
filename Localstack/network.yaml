@@ -337,8 +337,8 @@ Resources:
       Name: !Sub "${AWS::StackName}-TargetGroup"
       Port: 9000
       Protocol: HTTP
-      VpcId: !Ref VPC
       TargetType: ip
+      VpcId: !Ref VPC
       HealthCheckIntervalSeconds: 30
       HealthCheckProtocol: HTTP
       HealthCheckTimeoutSeconds: 5
@@ -348,20 +348,35 @@ Resources:
         - Key: Name
           Value: !Sub "${AWS::StackName}-TargetGroup"
 
-  LoadBalancerListenerRule:
-    Type: AWS::ElasticLoadBalancingV2::ListenerRule
-    Properties:
-      Actions:
-        - Type: forward
-          TargetGroupArn: !Ref TargetGroup
-      Conditions:
-        - Field: http-header
-          HttpHeaderConfig:
-            HttpHeaderName: "forwarded-key"
-            Values:
-              - "123456789"
-      ListenerArn: !Ref LoadBalancerListener
-      Priority: 1
+  # LoadBalancerListenerRule:
+  #   Type: AWS::ElasticLoadBalancingV2::ListenerRule
+  #   Properties:
+  #     Actions:
+  #       - Type: forward
+  #         TargetGroupArn: !Ref TargetGroup
+  #     Conditions:
+  #       - Field: http-header
+  #         HttpHeaderConfig:
+  #           HttpHeaderName: "forwarded-key"
+  #           Values:
+  #             - "123456789"
+  #     ListenerArn: !Ref LoadBalancerListener
+  #     Priority: 1
+
+  # LoadBalancerListener:
+  #   Type: AWS::ElasticLoadBalancingV2::Listener
+  #   DependsOn:
+  #     - LoadBalancer
+  #   Properties:
+  #     LoadBalancerArn: !Ref LoadBalancer
+  #     Protocol: HTTP
+  #     Port: 80
+  #     DefaultActions:
+  #       - Type: fixed-response
+  #         FixedResponseConfig:
+  #           StatusCode: "503"
+  #           ContentType: "text/plain"
+  #           MessageBody: "Service Unavailable"
 
   LoadBalancerListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -369,14 +384,11 @@ Resources:
       - LoadBalancer
     Properties:
       LoadBalancerArn: !Ref LoadBalancer
-      Protocol: HTTP
-      Port: 80
+      Protocol: HTTPS
+      Port: 443
       DefaultActions:
-        - Type: fixed-response
-          FixedResponseConfig:
-            StatusCode: "503"
-            ContentType: "text/plain"
-            MessageBody: "Service Unavailable"
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
 
 Outputs:
   VPC:
